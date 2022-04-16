@@ -58,9 +58,12 @@ public class Main {
             Map<String, NotionTask> notionTasks = new HashMap<>();
 
             for (var node : results) {
-                var name = config.taskPrefix + node.get("properties").get("Name").get("title").get(0).get("plain_text").asText();
-                var uuid = node.get("id").asText();
-                notionTasks.put(name, new NotionTask(uuid, name));
+                var titleField = node.get("properties").get("Name").get("title");
+                if (titleField.size() > 0) {
+                    var name = config.taskPrefix + titleField.get(0).get("plain_text").asText();
+                    var uuid = node.get("id").asText();
+                    notionTasks.put(name, new NotionTask(uuid, name));
+                }
             }
 
             return notionTasks;
@@ -96,16 +99,16 @@ public class Main {
         }
     }
 
-    record UpdateList(Set<String> addToPomoTodo, Set<String> removeFromPomoTodo, Set<String> completeInNotion) {
+    record UpdateList(List<NotionTask> addToPomoTodo, List<PomodoroTask> removeFromPomoTodo, List<NotionTask> completeInNotion) {
     }
 
     private UpdateList formUpdateList(Map<String, NotionTask> notionTasks, Map<String, PomodoroTask> pomoTasks) {
-        Set<String> toAdd = new HashSet<>();
-        Set<String> toRemove = new HashSet<>();
-        Set<String> toMarkCompleted = new HashSet<>();
+        List<NotionTask> toAdd = new ArrayList<>();
+        List<PomodoroTask> toRemove = new ArrayList<>();
+        List<NotionTask> toMarkCompleted = new ArrayList<>();
 
-        for (var notionTask: notionTasks.keySet()) {
-            if (!pomoTasks.containsKey(notionTask)) {
+        for (var notionTask: notionTasks.values()) {
+            if (!pomoTasks.containsKey(notionTask.name)) {
                 toAdd.add(notionTask);
             }
         }
@@ -116,10 +119,10 @@ public class Main {
 
                 if (notionTask != null) {
                     if (pomoTask.completed) {
-                        toMarkCompleted.add(notionTask.uuid);
+                        toMarkCompleted.add(notionTask);
                     }
                 } else {
-                    toRemove.add(pomoTask.uuid);
+                    toRemove.add(pomoTask);
                 }
             }
         }
@@ -127,13 +130,13 @@ public class Main {
         return new UpdateList(toAdd, toRemove, toMarkCompleted);
     }
 
-    private void addPomoTask(String task) {
+    private void addPomoTask(NotionTask task) {
         var jsonRequest = String.format("""
                         {
                         	"description": "%s",
                         	"pin": true
                         }
-                        """, task);
+                        """, task.name);
 
         Request request = new Request.Builder()
                 .url("https://api.pomotodo.com/1/todos")
@@ -148,9 +151,9 @@ public class Main {
         }
     }
 
-    private void removePomoTask(String task) {
+    private void removePomoTask(PomodoroTask task) {
         Request request = new Request.Builder()
-                .url("https://api.pomotodo.com/1/todos/" + task)
+                .url("https://api.pomotodo.com/1/todos/" + task.uuid)
                 .delete()
                 .addHeader("Authorization", "token " + config.pomodoroToken)
                 .build();
@@ -162,9 +165,9 @@ public class Main {
         }
     }
 
-    private void markNotionTaskCompleted(String uuid) {
+    private void markNotionTaskCompleted(NotionTask task) {
         Request request = new Request.Builder()
-                .url("https://api.notion.com/v1/pages/" + uuid)
+                .url("https://api.notion.com/v1/pages/" + task.uuid)
                 .patch(RequestBody.create("""
                         {
                         	"properties": {
@@ -182,7 +185,7 @@ public class Main {
                 .build();
 
         try (Response response = client.newCall(request).execute()) {
-            System.out.println("Completed task " + uuid + " code " + response.code());
+            System.out.println("Completed task " + task + " code " + response.code());
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
